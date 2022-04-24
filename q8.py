@@ -12,6 +12,8 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data.sampler import SubsetRandomSampler
 
 from sklearn.metrics import confusion_matrix
+from sklearn.manifold import TSNE
+
 
 import numpy as np
 import seaborn as sn
@@ -62,6 +64,7 @@ def visualize_kernels(model: Net):
     
     fig.savefig("kernels.png")
 
+
 def plot_confusion_matrix(model, device, test_loader):
     model.eval()
     y_pred = []
@@ -86,6 +89,71 @@ def plot_confusion_matrix(model, device, test_loader):
     plt.savefig('confusion_matrix.png')
 
 
+def kNN(data, center, k):
+    # Find k nearest neighbors
+    # cloud is 4d tensor
+    # center is target tensor
+    dist = torch.norm(data - center, dim=1)
+    vals, ids = dist.topk(k + 1, largest=False)
+    return vals[1:], ids[1:]
+
+
+def feature_repr(model: Net, device, test_loader):
+    feature_vectors = []
+    labels = []
+    images = []
+    n = 5
+
+    model.eval()
+    
+    def copy_data(m, i, o):
+        feature_vectors.append(o.squeeze().cpu())
+
+    h = model.fc3.register_forward_hook(copy_data)
+
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            model(data)
+            labels.extend([x.item() for x in target.squeeze().cpu()])
+            images.extend(data.squeeze().cpu().numpy())
+    
+    h.remove()
+    feature_vectors = torch.cat(feature_vectors, 0)
+
+    fig = plt.figure()
+    axs1 = fig.subplots(n, 1, gridspec_kw=dict(left=0.05, right=0.12, wspace=0.4))
+    axs2 = fig.subplots(n, 8, gridspec_kw=dict(left=0.2, right=0.95, wspace=0.4))
+
+    ids = torch.randint(0, len(feature_vectors), size=(n,))
+
+    for i, id in enumerate(ids):
+        axs1[i].set_xticks([])
+        axs1[i].set_yticks([])
+        axs1[i].imshow(images[id], cmap='gray')
+
+        nn = kNN(feature_vectors, feature_vectors[id], 8)
+        for j, n_id in enumerate(nn[1]):
+            ax = axs2[i, j]
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.imshow(images[n_id], cmap='gray')
+    
+
+    fig.savefig("nn.png")
+
+    embedding = TSNE(n_components=2, learning_rate='auto',
+                     init='random', verbose=1).fit_transform(feature_vectors)
+
+    plt.figure(figsize=(16,10))
+    sn.scatterplot(
+        x=embedding[:, 0], y=embedding[:, 1],
+        hue=labels,
+        palette=sn.color_palette("hls", 10),
+        legend="full",
+        alpha=0.3
+    )
+    plt.savefig('tsne.png')
 
 
 if __name__ == '__main__':
@@ -117,6 +185,7 @@ if __name__ == '__main__':
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=1000, shuffle=True, **kwargs)
 
-    # visualize_miss(model, device, test_loader)
-    # visualize_kernels(model)
+    visualize_miss(model, device, test_loader)
+    visualize_kernels(model)
     plot_confusion_matrix(model, device, test_loader)
+    feature_repr(model, device, test_loader)
