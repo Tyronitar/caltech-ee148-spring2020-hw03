@@ -1,6 +1,5 @@
 from __future__ import print_function
 import argparse
-from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -86,52 +85,9 @@ class Net(nn.Module):
     '''
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1_1 = nn.Conv2d(1, 64, 3, 1)
-        self.norm1_1 = nn.BatchNorm2d(64)
-        self.conv1_2 = nn.Conv2d(64, 64, 3, 1)
-        self.norm1_2 = nn.BatchNorm2d(64)
-        self.pool1 = nn.MaxPool2d(2)
-        self.dropout1 = nn.Dropout2d(0.5)
-
-        self.conv2_1 = nn.Conv2d(64, 128, 3, 1)
-        self.norm2_1 = nn.BatchNorm2d(128)
-        self.conv2_2 = nn.Conv2d(128, 128, 3, 1)
-        self.norm2_2 = nn.BatchNorm2d(128)
-        self.pool2 = nn.MaxPool2d(2)
-        self.dropout2 = nn.Dropout2d(0.5)
-
-        self.fc1 = nn.Linear(2048, 2048)
-        self.fc2 = nn.Linear(2048, 128)
-        self.fc3 = nn.Linear(128, 10)
 
     def forward(self, x):
-        x = self.conv1_1(x)
-        x = self.norm1_1(x)
-        x = F.leaky_relu(x)
-        x = self.conv1_2(x)
-        x = self.norm1_2(x)
-        x = F.leaky_relu(x)
-        x = self.pool1(x)
-        x = self.dropout1(x)
-
-        x = self.conv2_1(x)
-        x = self.norm2_1(x)
-        x = F.leaky_relu(x)
-        x = self.conv2_2(x)
-        x = self.norm2_2(x)
-        x = F.leaky_relu(x)
-        x = self.pool2(x)
-        x = self.dropout2(x)
-
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.leaky_relu(x)
-        x = self.fc2(x)
-        x = F.leaky_relu(x)
-        x = self.fc3(x)
-
-        output = F.log_softmax(x, dim=1)
-        return output
+        return x
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -173,8 +129,6 @@ def test(model, device, test_loader, set_name = "Test set"):
     print('\n{}: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         set_name, test_loss, correct, test_num,
         100. * correct / test_num))
-    
-    return test_loss
 
 
 def main():
@@ -207,13 +161,6 @@ def main():
 
     parser.add_argument('--save-model', action='store_true', default=True,
                         help='For Saving the current Model')
-    
-    parser.add_argument('--name',type=str, default="mnist_model.pt", 
-                        help='File name to save model to (default: mnist_model.pt)')
-
-    parser.add_argument('--fraction', type=float, default=1.0,
-                        help='Proportion of the dataset to use for training (Default: 1.0)')
-
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -221,14 +168,14 @@ def main():
 
     device = torch.device("cuda" if use_cuda else "cpu")
 
-    kwargs = {'num_workers': 4, 'pin_memory': True} if use_cuda else {}
+    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
     # Evaluate on the official test set
     if args.evaluate:
         assert os.path.exists(args.load_model)
 
         # Set the test model
-        model = Net().to(device)
+        model = fcNet().to(device)
         model.load_state_dict(torch.load(args.load_model))
 
         test_dataset = datasets.MNIST('../data', train=False,
@@ -248,6 +195,7 @@ def main():
     train_dataset = datasets.MNIST('../data', train=True, download=True,
                 transform=transforms.Compose([       # Data preprocessing
                     transforms.ToTensor(),           # Add data augmentation here
+                    transforms.RandomRotation(10),
                     transforms.Normalize((0.1307,), (0.3081,))
                 ]))
 
@@ -266,10 +214,6 @@ def main():
     for i in range(len(train_dataset.classes)):
         class_idxs = torch.where(targets == i)[0]
         class_idxs = class_idxs[torch.randperm(len(class_idxs))]
-        
-        # Only use the desired proportion of the dataset
-        class_idxs = class_idxs[:int(args.fraction * len(class_idxs))]
-
         split = int(0.15 * len(class_idxs))
         subset_indices_valid = torch.cat((subset_indices_valid, class_idxs[:split]), 0)
         subset_indices_train = torch.cat((subset_indices_train, class_idxs[split:]), 0)
@@ -284,8 +228,7 @@ def main():
     )
 
     # Load your model [fcNet, ConvNet, Net]
-    # model = ConvNet().to(device)
-    model = Net().to(device)
+    model = ConvNet().to(device)
 
     # Try different optimzers here [Adam, SGD, RMSprop]
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
@@ -294,29 +237,16 @@ def main():
     scheduler = StepLR(optimizer, step_size=args.step, gamma=args.gamma)
 
     # Training loop
-    train_loss = np.zeros(args.epochs)
-    val_loss = np.zeros(args.epochs)
-    epochs = list(range(1, args.epochs + 1))
-    for epoch in epochs:
+    for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch)
-        train_loss[epoch - 1] = test(model, device, train_loader, "Training Set")
-        val_loss[epoch - 1] = test(model, device, val_loader, "Validation Set")
+        test(model, device, train_loader, "Training Set")
+        test(model, device, val_loader, "Validation Set")
         scheduler.step()    # learning rate scheduler
 
         # You may optionally save your model at each epoch here
-    
-    # Plot loss curves
-    plt.title("Loss vs Epoch")
-    plt.plot(epochs, train_loss, label="Train")
-    plt.plot(epochs, val_loss, label="Val")
-    plt.legend()
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.savefig("loss_curve.png")
-    plt.show()
 
     if args.save_model:
-        torch.save(model.state_dict(), args.name)
+        torch.save(model.state_dict(), "mnist_model.pt")
 
 
 if __name__ == '__main__':
